@@ -36,17 +36,11 @@ end
 
 function ClosedLoopXShifter(X_start, Y_start, X_delta, Y_delta)
 	variable X_start, Y_start, X_delta, Y_delta
-	//The size of the Radius of the circle in volts. These are low voltage sensor volts
+	//These are low voltage sensor volts
 	//The min is -10 volts and the max is +10 volts, but the sensors don't use the full range
 	//Try using 3 volts for a radius
-	
-	//Note that this function will make new copies of the graphs everytime. To keep things simpler I didn't 
-	//address that. If this annoys you (and it should) take a look at the help for DoWindow.
 
 	variable Error = 0
-	//We will accumulate all the outputs from the td_ commands to see if we made any mistakes
-	//If all went well, Error will be 0 at the end
-	
 	Make/N=(1024)/O XVoltage YVoltage XSensor YSensor XCommand YCommand
 	Display/K=1 /W=(5.25,41.75,399.75,250.25) XVoltage
 	Appendtograph/R YVoltage
@@ -57,14 +51,6 @@ function ClosedLoopXShifter(X_start, Y_start, X_delta, Y_delta)
 	
 	GetGains()
 	NVAR X_PGain, X_IGain, X_SGain, Y_PGain, Y_IGain, Y_SGain
-
-	//Since we haven't set up the waves yet, they will still have p scaling so we will do the sign and cosine
-	//based on p scaling rather than x scaling (time) like we did in the OpenLoopCircle function.
-	
-	//Since we will be doing this closed loop, inputs and outputs are reversed from the open loop situation.
-	//We will pass the feedback loop XSensor and YSensor voltages we would like (a command signal) and
-	//it will vary the XVoltage and YVoltage to try to achieve this.
-	//We will use the trick of looking at outputs (X%Output) as input waves to see what these voltages were.
 	
 	if (X_delta < 0)
 		X_delta = abs(X_delta)
@@ -80,16 +66,15 @@ function ClosedLoopXShifter(X_start, Y_start, X_delta, Y_delta)
 		YCommand = Y_delta*((p/1024)) // moves Y upward
 	endif
 	
-	//XCommand = X_delta*(1-(p/1024)) // moves X leftwards i guess
-	//YCommand =0*pi*p/1024// No Y movement
-	//YCommand = Y_delta*((p/1024)) // moves Y upwards
-	//YCommand =Radius*sin(2*pi*p/1024)
+	// To make it least painful for the sensors / piezo: X and Y start must be the starting values
+	// Or else they'll have to jump from their hardcoded set point to the first setpoint in the arrays
+	// given by the PIS loops
 	
 	Error += td_stop()
 	//print Error
-	Error += td_xSetPISLoop(0,"always", "X%Input@Controller", X_delta, X_PGain, X_IGain, X_SGain, "X%Output@Controller")
+	Error += td_xSetPISLoop(0,"always", "X%Input@Controller", XCommand[0], X_PGain, X_IGain, X_SGain, "X%Output@Controller")
 	//print Error
-	Error += td_xSetPISLoop(1,"always", "Y%Input@Controller", 0, Y_PGain, Y_IGain, Y_SGain, "Y%Output@Controller")
+	Error += td_xSetPISLoop(1,"always", "Y%Input@Controller", YCommand[0], Y_PGain, Y_IGain, Y_SGain, "Y%Output@Controller")
 	//print Error
 	Error += td_xSetOutWavePair(0, "0,0", "Setpoint%PISLoop0", XCommand, "SetPoint%PISLoop1",YCommand,100)
 	//print Error
