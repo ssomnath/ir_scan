@@ -1,10 +1,11 @@
 #pragma rtGlobals=1		// Use modern global access method.
 
 function GetGains()
-//This function grabs the gains that the X, Y, and Z feedback loops are using. It prints them to the history and also
-//copies them into some global variables. The microscope should be engaged and scanning when this is run.
+//This function grabs the gains that the X and Y feedback loops are using. It prints them to the history and also
+//copies them into some global variables. 
+//NOTE: The microscope should be engaged and scanning when this is run.
 
-	variable/G X_PGain, X_IGain, X_SGain, Y_PGain, Y_IGain, Y_SGain, Z_PGain, Z_IGain, Z_SGain
+	variable/G X_PGain, X_IGain, X_SGain, Y_PGain, Y_IGain, Y_SGain
 
 	//Loop 0 is a bit strange in that it should have been named PISLoop0 but for historical reasons is named PISLoop
 	X_PGain = td_RV("PGain%PISLoop0")
@@ -17,12 +18,16 @@ function GetGains()
 
 	//printf "X Gains:  P:%.4g I:%.4g S:%.4g\r", X_PGain, X_IGain, X_SGain
 	//printf "Y Gains:  P:%.4g I:%.4g S:%.4g\r", Y_PGain, Y_IGain, Y_SGain
-	//printf "Z Gains:  P:%.4g I:%.4g S:%.4g\r", Z_PGain, Z_IGain, Z_SGain
 
 end
 
+// Caution: Needs to be called AFTER hitting a "Do Scan"
+// Read instructions in GetGains()
 function masterRaster()
 	Make/N=3 /O Xval, Yval
+	
+	//Take into account the XLVDTSens and the YLVDTSens values
+	//and calculate the following values in terms of the Input voltages.
 	Xval[0] = 1
 	Yval[0] = 0
 	Xval[1] = 1
@@ -33,14 +38,77 @@ function masterRaster()
 	Variable/G giter = 0
 	
 	// Starting off with first movement:
-	ClosedLoopXShifter(0, 0, Xval[0], Yval[0])
+	ClosedLoopStageShifter(0, 0, Xval[0], Yval[0])
 end
 
-function ClosedLoopXShifter(X_start, Y_start, X_end, Y_end)
+function masterRaster2(scansize, scanpoints)
+	Variable scansize, scanpoints
+
+	Variable /G gIsMovingRight, gXindex, gYindex, gMaxIndex, gDeltaX, gDeltaY, gOriginX, gOriginY
+	
+	//Before anything is done set scansize right (to microns):
+	//scansize *= 1e-6
+	
+	// Just index based variables
+	gIsMovingRight = 1// 1 = right and (-1) = left
+	gXindex = 0
+	gYIndex = 0
+	gMaxIndex = scanpoints
+	
+	//Input Sensor based variables:
+	// In reality, I would divide gDeltaX and Y again by GV("XLVDTSens") etc
+	gDeltaX = scansize/scanpoints
+	gDeltaY = scansize/scanpoints
+	gOriginX = 0
+	gOriginY = 0
+	
+	// Moving to first coordinate
+	dummyMover(gOriginX, gOriginY,gOriginX, gOriginY)
+
+end
+
+Function dummyMover(Xstart, Ystart, Xend, Yend)
+	Variable Xstart, Ystart, Xend, Yend
+		
+	print "Dummy moving to (" + num2str(Xend) + " , " + num2str(Yend) + ")"
+	
+	Variable t0 = ticks
+	do
+	while ((ticks - t0)/60 < 1)
+	
+	setNextIndex()
+	
+End
+
+// This is to be the callback function that will reset the global variables 
+function setNextIndex()
+
+	NVAR gIsMovingRight, gXindex, gYindex, gMaxIndex, gDeltaX, gDeltaY, gOriginX, gOriginY
+	
+	//Stat coordinate for next move is going to be the same regardless:
+	Variable XS = gOriginX + gXindex*gDeltaX
+	Variable YS = gOriginY + gYindex*gDeltaY
+	
+	if(((gIsMovingRight==1 && gXindex == gMaxIndex-1) || (gIsMovingRight==-1 && gXindex == 0)) && gYindex == gMaxIndex-1)
+		print "Finished Scanning!"
+		return 0
+	elseif(((gIsMovingRight==1 && gXindex == gMaxIndex-1) || (gIsMovingRight==-1 && gXindex == 0)) && gYindex != gMaxIndex-1)
+		//Need to Move up one and then start in the opposite direction in X
+		gIsMovingRight *= -1
+		gYindex +=1
+		dummyMover(XS, YS, XS, YS + gDeltaY)
+	else
+		//Need to move horizontally one step keeping in mind the direction
+		gXindex +=1*gIsMovingRight
+		dummyMover(XS, YS, XS + gIsMovingRight*gDeltaX, YS)	
+	endif
+	
+End
+
+function ClosedLoopStageShifter(X_start, Y_start, X_end, Y_end)
 	variable X_start, Y_start, X_end, Y_end
-	//These are low voltage sensor volts
+	//These are low voltage sensor volts. Try using 3 volts for a radius
 	//The min is -10 volts and the max is +10 volts, but the sensors don't use the full range
-	//Try using 3 volts for a radius
 
 	Make/N=(1024)/O XVoltage YVoltage XSensor YSensor XCommand YCommand
 	
@@ -86,7 +154,7 @@ function ClosedLoopXShifter(X_start, Y_start, X_end, Y_end)
 	Error +=td_WriteString("0%Event", "once")
 
 	if (Error)
-		//print "Error in one of the td_ functions in ClosedLoopXShifter: ", Error
+		//print "Error in one of the td_ functions in ClosedLoopStageShifter: ", Error
 	endif
 	
 end
@@ -103,7 +171,7 @@ Function holdStationary()
 	Variable xvalue = XCommand[numpnts(XCommand)-1]
 	Variable yvalue = YCommand[numpnts(YCommand)-1]
 	
-	print "requesting to hold at (" + num2str(xvalue) + " , " + num2str(yvalue) + ")"
+	print "holding stage at (" + num2str(xvalue) + " , " + num2str(yvalue) + ")"
 	
 	Error += td_xSetPISLoop(0,"always", "X%Input@Controller", xvalue, X_PGain, X_IGain, X_SGain, "X%Output@Controller")
 	
@@ -141,11 +209,12 @@ Function nextPos()
 	giter +=1
 	
 	print "Finished Iteration #" + num2str(giter)
-	print "Current position = (" + num2str(td_rv("X%input@Controller")) + " , " + num2str(td_rv("Y%input@Controller")) + ")"
+	print "Input Sensors = (" + num2str(td_rv("X%input@Controller")) + " , " + num2str(td_rv("Y%input@Controller")) + ")"
+	print "Output Sensors = (" + num2str(td_rv("X%output@Controller")) + " , " + num2str(td_rv("Y%output@Controller")) + ")"
 	
 	if(giter < numpnts(Xval))
 		print "Calling move again!"
-		ClosedLoopXShifter(Xval[giter-1], Yval[giter-1], Xval[giter], Yval[giter])
+		ClosedLoopStageShifter(Xval[giter-1], Yval[giter-1], Xval[giter], Yval[giter])
 	else
 		print "Finished raster scanning!"
 	endif
