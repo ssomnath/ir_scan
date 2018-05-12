@@ -67,11 +67,19 @@ Function IRScanDriver()
 	Y_IGain = td_RV("IGain%PISLoop1")
 	Y_SGain = td_RV("SGain%PISLoop1")
 	
+	if( X_IGain == 0 || Y_IGain == 0)
+		DoAlert 0, "Error! \nPIS Loop gains uninitialized. \nStart and stop a scan before IR scanning to initialize the PIS loop gains"
+	endif
+	
 	Variable/G gscansize, gscanpoints, gScanAbort, gScanPercent
 	gscansize = 20// in microns - default
 	gScanPoints = 2// default
 	gScanAbort = 0
 	gScanPercent = 0
+	
+	//Dummy moving the stage before starting a scan:
+	td_WV("X%Output",0)
+	td_WV("Y%Output",0)
 	
 	// Rest of the initialization can occur each time the scan is started.	
 	Variable/G gIsMovingRight, gXindex, gYindex, gDeltaX, gDeltaY, gOriginX, gOriginY
@@ -91,24 +99,27 @@ End
 Window IRScanPanel(): Panel
 	
 	PauseUpdate; Silent 1		// building window...
-	NewPanel /K=1 /W=(485,145, 700,562) as "IR Scan v.1.0"
+	NewPanel /K=1 /W=(485,145, 700,562) as "IR Scan v.1.1"
 	SetDrawLayer UserBack
 	
 	SetDrawEnv fstyle= 1
 	DrawText 16,25, "Scan Controls:"
 	
-	SetVariable sv_scansize,pos={16,31},size={151,18},title="Scan Size (um)", limits={0,90,1}	
+	SetVariable sv_scansize,pos={16,34},size={151,18},title="IR Scan Size (um)", limits={0,90,1}	
 	SetVariable sv_scansize,value= root:packages:IRScan:gScanSize,live= 1
-	SetVariable sv_scanpoints,pos={16,57},size={139,18},title="Scan Points", limits={1,inf,1}	
+	SetVariable sv_scansize,help={"This is NOT related to the scan size in Master Panel"}
+	SetVariable sv_scanpoints,pos={16,62},size={139,18},title="IR Scan Points", limits={1,inf,1}	
 	SetVariable sv_scanpoints,value= root:packages:IRScan:gScanPoints,live= 1
+	SetVariable sv_scanpoints,help={"This is NOT related to the scan points in Master Panel"}
 	
 	SetDrawEnv fstyle= 1
 	DrawText 16,108, "Thermal Controls:"
 	
 	Popupmenu pm_resolution,pos={16,115},size={135,18},title="Resolution"
+	Popupmenu pm_resolution, mode=(GV("ThermalResolution")+1)
 	Popupmenu pm_resolution,value="1, best;2;3;4;5, default;6;7;8;9, fastest;" ,live= 1, proc=ResolPopup
 	
-	SetVariable sv_itertime,pos={16,143},size={184,18},title="Number of Samples", limits={0,inf,1}	
+	SetVariable sv_itertime,pos={16,146},size={184,18},title="Number of Samples", limits={0,inf,1}	
 	SetVariable sv_itertime,value= root:packages:IRScan:gThermalsamples,live= 1
 	SetVariable sv_itertime,help={"Number of samples taken per Thermal"}
 	
