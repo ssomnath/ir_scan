@@ -164,7 +164,19 @@ Function abortScan (ctrlname) : ButtonControl
 	SetDataFolder dfSave
 End
 
-Function abortCurrentScan()
+Function wrapUpScan()
+
+	//Make sure that no more 
+	ARCheckFunc("ARUserCallbackMasterCheck_1",0)
+	
+	//Stopping the PIS Loops
+	// could use td_stop
+	td_StopPISLoop(0)
+	td_StopPISLoop(1)
+	
+	//Displaying results:
+	Edit/K=0 'finalThermal';DelayUpdate
+	DoAlert 0, "There are two 'pages' in this table, one for each area under the curve\nUse the arrows in the top right corner to see them\nTo export this table go to: \nFile>>Save Table Copy >> Select txt or csv as type"
 		
 	ModifyControl but_start, disable=0, title="Start Scan"
 	ModifyControl but_stop, disable=0, title="Stop Scan"
@@ -206,7 +218,7 @@ Function startScan (ctrlname) : ButtonControl
 	gOriginX = 0
 	gOriginY = 0
 	
-	DoAlert 0, "If the 'Stop Scan' button does not work\nTry the 'Abort' button at the bottom left of the IGOR screen"
+	//DoAlert 0, "If the 'Stop Scan' button does not work\nTry the 'Abort' button at the bottom left of the IGOR screen"
 		
 	// Moving to first coordinate
 	MoveStage(gOriginX, gOriginY,gOriginX, gOriginY)
@@ -214,17 +226,99 @@ Function startScan (ctrlname) : ButtonControl
 	SetDataFolder dfSave
 End
 
-Function MoveStage(Xstart, Ystart, Xend, Yend)
-	Variable Xstart, Ystart, Xend, Yend
-		
-	print "Dummy moving to (" + num2str(Xend) + " , " + num2str(Yend) + ")"
+Function MoveStage(X_start, Y_start, X_end, Y_end)
+	Variable X_start, Y_start, X_end, Y_end
 	
+	String dfSave = GetDataFolder(1)
+	SetDataFolder root:packages:IRScan
+		
+	Make/N=(1024)/O XVoltage YVoltage XSensor YSensor XCommand YCommand
+	
+	//Display/K=1 /W=(5.25,41.75,399.75,250.25) XVoltage
+	//ModifyGraph rgb(XVoltage)=(0,0,65535 )
+	//Appendtograph/R YVoltage; Legend
+	//Display/K=1 /W=(7.5,275.75,402,484.25) XSensor
+	//ModifyGraph rgb(XSensor)=(0,0,65535 )
+	//Appendtograph/R YSensor; Legend
+	//Display/K=1 /W=(409.5,41.75,662.25,250.25) YSensor vs XSensor
+	//ModifyGraph width={Plan,1,bottom,left} 
+	
+	NVAR X_PGain, X_IGain, X_SGain, Y_PGain, Y_IGain, Y_SGain
+	
+	// Giving movement directions to the X and Y Piezos:
+	XCommand = X_start + (X_end - X_start)*(p/1024) 
+	YCommand = Y_start + (Y_end - Y_start)*(p/1024) 
+		
+	// To make it least painful for the sensors / piezo: X and Y start must be the starting values
+	// Or else they'll have to jump from their hardcoded set point to the first setpoint in the arrays
+	// given by the PIS loops
+	
+	//Unfortunately, as consequence, the piezos move back to their initial setpoint as given during
+	// their initialization although the set out wave pair is actually resetting the setpoint of the PIS
+	// Must use a callback to reset the PIS to the final position.
+	
+	variable Error = 0
+	
+	Error += td_stop()
+	
+	Error += td_xSetPISLoop(0,"always", "X%Input@Controller", XCommand[0], X_PGain, X_IGain, X_SGain, "X%Output@Controller")
+	
+	Error += td_xSetPISLoop(1,"always", "Y%Input@Controller", YCommand[0], Y_PGain, Y_IGain, Y_SGain, "Y%Output@Controller")
+	
+	Error += td_xSetOutWavePair(0, "0,0", "Setpoint%PISLoop0", XCommand, "SetPoint%PISLoop1",YCommand,100)
+	
+	Error += td_xSetInWavePair(0, "0,0", "X%Output@Controller", XVoltage, "Y%Output@Controller", YVoltage, "", 100)
+	
+	Error += td_xSetInWavePair(1, "0,0", "X%Input@Controller", XSensor, "Y%Input@Controller", YSensor, "holdStationary()", 100)
+	
+
+	Error +=td_WriteString("0%Event", "once")
+	
+	if (Error)
+		//print "Error in one of the td_ functions in ClosedLoopStageShifter: ", Error
+	endif
+	
+	SetDataFolder dfSave
+	
+End
+
+Function holdStationary()
+
+	String dfSave = GetDataFolder(1)
+	SetDataFolder root:packages:IRScan
+
+	td_stop()
+	
+	NVAR X_PGain, X_IGain, X_SGain, Y_PGain, Y_IGain, Y_SGain
+	
+	Wave XCommand, YCommand
+	
+	Variable Error = 0
+	Variable xvalue = XCommand[numpnts(XCommand)-1]
+	Variable yvalue = YCommand[numpnts(YCommand)-1]
+	
+	//print "holding stage at (" + num2str(xvalue) + " , " + num2str(yvalue) + ")"
+	
+	Error += td_xSetPISLoop(0,"always", "X%Input@Controller", xvalue, X_PGain, X_IGain, X_SGain, "X%Output@Controller")
+	
+	Error += td_xSetPISLoop(1,"always", "Y%Input@Controller", yvalue, Y_PGain, Y_IGain, Y_SGain, "Y%Output@Controller")
+
+	if (Error)
+		//print "Error in one of the td_ functions in holdStationary: ", Error
+	endif
+		
+	//Temporarily placed a wait here. 
+	// Assuming thermal doesn't wipe out my PIS / stop them......
+	// This should simulate the the position kept constant for some time
+	// Moreover. Noticed that the position is more stable this way
+	// Piezos dont look like they want to be rushed into darting to the coordinate
 	Variable t0 = ticks
 	do
-	while ((ticks - t0)/60 < 1)
+	while ((ticks - t0)/60 < 3)	
 	
-	//startThermals()
-	moveToNext()
+	SetDataFolder dfSave
+		
+	startThermals()
 	
 End
 
@@ -237,7 +331,7 @@ function moveToNext()
 	NVAR gIsMovingRight, gXindex, gYindex, gDeltaX, gDeltaY, gOriginX, gOriginY, gScanAbort
 	
 	if(gScanAbort)
-		AbortCurrentScan()
+		wrapUpScan()
 	endif
 	
 	//printf "Right= %.2g, Xindex = %.2g, Yindex = %.2g\r", gIsMovingRight, gXindex, gYindex
@@ -259,10 +353,8 @@ function moveToNext()
 	
 	if(((gIsMovingRight==1 && gXindex == gScanPoints-1) || (gIsMovingRight==-1 && gXindex == 0)) && gYindex == gScanPoints-1)
 		//print "Finished Scanning!"
-		ModifyControl but_start, disable=0, title="Start Scan"
 		SetDataFolder dfSave
-		//Although not a good idea. For now it'll work
-		abortCurrentScan()
+		wrapUpScan()
 		return 0
 	elseif(((gIsMovingRight==1 && gXindex == gScanPoints-1) || (gIsMovingRight==-1 && gXindex == 0)) && gYindex != gScanPoints-1)
 		//Need to Move up one and then start in the opposite direction in X
@@ -302,7 +394,11 @@ Function startThermals()
 	Variable t0 = ticks
 	do
 	while ((ticks - t0)/60 < 1)
-	print "Starting Thermal Iterator!"
+	
+	//print "Input Sensors = (" + num2str(td_rv("X%input@Controller")) + " , " + num2str(td_rv("Y%input@Controller")) + ")"
+	//print "Output Sensors = (" + num2str(td_rv("X%output@Controller")) + " , " + num2str(td_rv("Y%output@Controller")) + ")"
+
+	//print "Starting Thermal Iterator!"
 	DoThermalFunc("DoThermal")
 	
 End
@@ -328,10 +424,10 @@ Function Thermaliterator()
 		NVAR gThermalCurrent, gThermaliter,gThermalPercent, gScanAbort
 		
 		if(gScanAbort)
-			abortCurrentScan()
+			wrapUpScan()
 		endif
 		
-		print "Completed iteration #" + num2str(gThermalCurrent) + " of " + num2str(gThermaliter)
+		//print "Completed iteration #" + num2str(gThermalCurrent) + " of " + num2str(gThermaliter)
 		gThermalPercent = gThermalCurrent*100/gThermaliter
 		
 		// Calculating area(s) under the curve
@@ -356,7 +452,7 @@ Function Thermaliterator()
 			DoThermalFunc("DoThermal")
 		
 		else
-			print "All Iterations finished"
+			//print "All Iterations finished"
 			gThermalCurrent=1
 			SetDataFolder dfSave
 			ARCheckFunc("ARUserCallbackMasterCheck_1",0)
