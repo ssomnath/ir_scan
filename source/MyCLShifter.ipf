@@ -25,10 +25,12 @@ function masterRaster()
 	Make/N=3 Xval, Yval
 	Xval[0] = 1
 	Yval[0] = 0
-	Xval[1] = 1
+	Xval[1] = 0
 	Yval[1] = 1
-	Xval[2] = 2
+	Xval[2] = 0
 	Yval[2] = 1
+	
+	Variable/G iter = 0
 	
 	// Starting off with first movement:
 	ClosedLoopXShifter(0, 0, Xval[0], Yval[0])
@@ -40,53 +42,71 @@ function ClosedLoopXShifter(X_start, Y_start, X_delta, Y_delta)
 	//The min is -10 volts and the max is +10 volts, but the sensors don't use the full range
 	//Try using 3 volts for a radius
 
-	variable Error = 0
 	Make/N=(1024)/O XVoltage YVoltage XSensor YSensor XCommand YCommand
 	Display/K=1 /W=(5.25,41.75,399.75,250.25) XVoltage
-	Appendtograph/R YVoltage
+	ModifyGraph rgb(XVoltage)=(0,0,65535 )
+	Appendtograph/R YVoltage; Legend
 	Display/K=1 /W=(7.5,275.75,402,484.25) XSensor
-	Appendtograph/R YSensor
+	ModifyGraph rgb(XSensor)=(0,0,65535 )
+	Appendtograph/R YSensor; Legend
 	Display/K=1 /W=(409.5,41.75,662.25,250.25) YSensor vs XSensor
 	ModifyGraph width={Plan,1,bottom,left} 
 	
 	GetGains()
 	NVAR X_PGain, X_IGain, X_SGain, Y_PGain, Y_IGain, Y_SGain
 	
-	if (X_delta < 0)
-		X_delta = abs(X_delta)
-		XCommand = X_delta*(1-(p/1024)) // moves X leftwards i guess
-	else
-		XCommand = X_delta*((p/1024)) // moves X rightwards
-	endif
-	
-	if (Y_delta < 0)
-		Y_delta = abs(Y_delta)
-		YCommand = Y_delta*(1-(p/1024)) // moves Y downward i guess
-	else
-		YCommand = Y_delta*((p/1024)) // moves Y upward
-	endif
-	
+	// Giving movement directions to the X and Y Piezos:
+	XCommand = X_start + X_delta*(p/1024) 
+	YCommand = Y_start + Y_delta*(p/1024) 
+		
 	// To make it least painful for the sensors / piezo: X and Y start must be the starting values
 	// Or else they'll have to jump from their hardcoded set point to the first setpoint in the arrays
 	// given by the PIS loops
 	
+	//Unfortunately, as consequence, the piezos move back to their initial setpoint as given during
+	// their initialization although the set out wave pair is actually resetting the setpoint of the PIS
+	// Must use a callback to reset the PIS to the final position.
+	
+	variable Error = 0
+	
 	Error += td_stop()
-	//print Error
+	
 	Error += td_xSetPISLoop(0,"always", "X%Input@Controller", XCommand[0], X_PGain, X_IGain, X_SGain, "X%Output@Controller")
-	//print Error
+	
 	Error += td_xSetPISLoop(1,"always", "Y%Input@Controller", YCommand[0], Y_PGain, Y_IGain, Y_SGain, "Y%Output@Controller")
-	//print Error
+	
 	Error += td_xSetOutWavePair(0, "0,0", "Setpoint%PISLoop0", XCommand, "SetPoint%PISLoop1",YCommand,100)
-	//print Error
-	Error += td_xSetInWavePair(0, "0,0", "X%Output@Controller", XVoltage, "Y%Output@Controller", YVoltage, "", 100)
-	//print Error
-	Error += td_xSetInWavePair(1, "0,0", "X%Input@Controller", XSensor, "Y%Input@Controller", YSensor, "print \"Finished moving. Can start themal now.\"", 100)
-	//print Error
+	
+	Error += td_xSetInWavePair(0, "0,0", "X%Output@Controller", XVoltage, "Y%Output@Controller", YVoltage, "print \"Finished moving. Can start themal now.\"", 100)
+	
+	Error += td_xSetInWavePair(1, "0,0", "X%Input@Controller", XSensor, "Y%Input@Controller", YSensor, "holdStationary()", 100)
+	
 
 	Error +=td_WriteString("0%Event", "once")
 
 	if (Error)
-		print "Error in one of the td_ functions in ClosedLoopCircle: ", Error
+		print "Error in one of the td_ functions in ClosedLoopXShifter: ", Error
 	endif
 	
 end
+
+Function holdStationary()
+
+	td_stop()
+	
+	NVAR X_PGain, X_IGain, X_SGain, Y_PGain, Y_IGain, Y_SGain
+	
+	Wave XCommand, YCommand
+	
+	Variable Error = 0
+	
+	Error += td_xSetPISLoop(0,"always", "X%Input@Controller", XCommand[numpnts(XCommand)], X_PGain, X_IGain, X_SGain, "X%Output@Controller")
+	
+	Error += td_xSetPISLoop(1,"always", "Y%Input@Controller", YCommand[numpnts(YCommand)], Y_PGain, Y_IGain, Y_SGain, "Y%Output@Controller")
+
+	if (Error)
+		print "Error in one of the td_ functions in holdStationary: ", Error
+	endif
+	
+	//Start calling thermal here!
+End
