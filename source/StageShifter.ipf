@@ -12,6 +12,19 @@ Function StageShifterDriver()
 		return 0
 	endif
 	
+	Variable PG = td_RV("PGain%PISLoop0")
+	Variable IG = td_RV("IGain%PISLoop0")
+	Variable SG = td_RV("SGain%PISLoop0")
+	Variable Error  = 0
+	Error += td_stop()
+	//Error += td_xSetPISLoop(0,"always","X%Input@Controller",td_rv("X%Output"),0,5522.96,1.23644e+06,"X%Output@Controller")
+	Error += td_xSetPISLoop(0,"always","X%Input@Controller",70,PG,IG,SG,"X%Output@Controller")
+	if(Error)
+		print "Error in one of the td_ functions in moveStage: ", Error
+	else
+		print "PIS initialized smoothly!"
+	endif
+	
 	String dfSave = GetDataFolder(1)
 	// Create a data folder in Packages to store globals.
 	NewDataFolder/O/S root:packages:StageShifter
@@ -36,7 +49,7 @@ End
 Window StageShifterPanel(): Panel
 	
 	PauseUpdate; Silent 1		// building window...
-	NewPanel /K=1 /W=(800,400, 1060,775) as "X Stage Shifter"
+	NewPanel /K=1 /W=(800,400, 1060,775) as "X Stage Shifter PIS"
 	SetDrawLayer UserBack
 	
 	SetVariable sv_Xm_out_mov,pos={16,16},size={225,18},title="Movement expected (um)"
@@ -94,7 +107,8 @@ Function moveStage (ctrlname) : ButtonControl
 	
 	// First calculating how much voltage to apply to the X Piezo	
 	// Will be using the XPiezoSens (although not the most accurate method)
-	gXP_delta = Xm_out/GV("XPiezoSens")
+	//gXP_delta = Xm_out/GV("XPiezoSens")
+	gXP_delta =gXm_out
 	
 	//Calculating the Xpiezo values:
 	gXP_in = td_rv("X%Output")
@@ -104,7 +118,15 @@ Function moveStage (ctrlname) : ButtonControl
 	gXS_in = td_rv("X%Input")
 	
 	//Moving
-	td_wv("X%Output",gXP_fin)
+	///td_wv("X%Output",gXP_fin)
+	//Variable Error = td_WriteValue("SetPoint%PISLoop0",gXP_fin)
+	Variable Error = td_WriteValue("SetPoint%PISLoop0",gXm_out)
+		
+	if(Error)
+		print "Error in one of the td_ functions in moveStage: ", Error
+	else
+		print "PIS ran smoothly!"
+	endif
 	
 	//Reading final X sensor value
 	gXS_fin = td_rv("X%Input")
