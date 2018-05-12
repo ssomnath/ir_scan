@@ -26,6 +26,19 @@ Function ThermalAnalDriver()
 	Variable/G gsamples=10
 	// How many times it has already run
 	Variable/G gcurrent=1
+	
+	//Variables for the indices of Thermal
+	Variable/G gstart1=NumVarOrDefault(":gstart1",58)
+	Variable/G gend1=NumVarOrDefault(":gend1",63)
+	Variable/G gstart2=NumVarOrDefault(":gstart2",58)
+	Variable/G gend2=NumVarOrDefault(":gend2",63)
+	
+	//Variables for displaying total Area under curve
+	Variable/G gArea1=0
+	Variable/G gArea2=0
+	
+	//Variable for displaying Progress
+	Variable/G gPercent=0
 		
 	//Set up call back information to enable looping
 	//turn on master callbacks
@@ -45,18 +58,41 @@ End
 Window ThermalAnalysisPanel(): Panel
 	
 	PauseUpdate; Silent 1		// building window...
-	NewPanel /K=1 /W=(485,145, 700,280) as "Thermal Iterator v.1.0"
+	NewPanel /K=1 /W=(485,145, 700,450) as "Thermal Iterator v.1.1"
 	SetDrawLayer UserBack
 	
 	SetVariable sv_maxiter,pos={16,14},size={184,18},title="Number of Iterations"
 	SetVariable sv_maxiter,value= root:packages:ThermalAnalysis:giter,live= 1
+	SetVariable sv_maxiter,help={"Number of times the Thermal must run"}
 	SetVariable sv_itertime,pos={16,43},size={184,18},title="Number of Samples", limits={0,inf,1}	
 	SetVariable sv_itertime,value= root:packages:ThermalAnalysis:gsamples,live= 1
+	SetVariable sv_itertime,help={"Number of samples taken per Thermal"}
 	
-	Button but_start,pos={16,77},size={74,20},title="Start", proc=startIterator
-	Button but_save,pos={102,77},size={98,20},title="Save Results", proc=saveResults
+	DrawText 16,89, "Area under Curve Section:"
 	
-	DrawText 45,124, "Suhas Somnath, UIUC 2009"
+	SetVariable sv_start1,pos={16,102},size={84,18},title="Start 1", limits={0,inf,1}
+	SetVariable sv_start1,value= root:packages:ThermalAnalysis:gstart1,live= 1
+	SetVariable sv_end1,pos={115,102},size={84,18},title="End 1", limits={0,inf,1}
+	SetVariable sv_end1,value= root:packages:ThermalAnalysis:gend1,live= 1
+	
+	SetVariable sv_start2,pos={16,132},size={84,18},title="Start 2", limits={0,inf,1}
+	SetVariable sv_start2,value= root:packages:ThermalAnalysis:gstart2,live= 1
+	SetVariable sv_end2,pos={115,132},size={84,18},title="End 2", limits={0,inf,1}
+	SetVariable sv_end2,value= root:packages:ThermalAnalysis:gend2,live= 1
+	
+	ValDisplay vd_Area1,pos={16,163},size={180,18},title="Area 1"
+	ValDisplay vd_Area1,value= root:packages:ThermalAnalysis:gArea1,live= 1
+	
+	ValDisplay vd_Area2,pos={16,188},size={180,18},title="Area 2"
+	ValDisplay vd_Area2,value= root:packages:ThermalAnalysis:gArea2,live= 1
+	
+	ValDisplay vd_Progress,pos={14,222},size={183,20},title="Progress", mode=0
+	ValDisplay vd_Progress,limits={0,100,0},barmisc={0,35},highColor= (0,43520,65280)
+	ValDisplay vd_Progress,value= root:packages:ThermalAnalysis:gPercent
+		
+	Button but_start,pos={16,250},size={187,20},title="Start", proc=startIterator
+	
+	DrawText 45,298, "Suhas Somnath, UIUC 2009"
 End
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -66,11 +102,14 @@ Function startIterator (ctrlname) : ButtonControl
 	String dfSave = GetDataFolder(1)
 	SetDataFolder root:packages:ThermalAnalysis
 	
-	NVAR gsamples, gcurrent, giter
+	NVAR gsamples, gcurrent, giter, gPercent,gArea1,gArea2
 	
 	gcurrent = 1
+	gPercent = 0
+	gArea1 = 0
+	gArea2 = 0
 	
-	Make/O/N=(giter) thermalpeakwave
+	Make/O/N=(giter,2) thermalareas
 	
 	PV("ThermalSamples",gsamples)
 	PV("ThermalSamplesLimit",gsamples)
@@ -102,13 +141,13 @@ Function Thermaliterator()
 		String dfSave = GetDataFolder(1)
 		SetDataFolder root:packages:ThermalAnalysis
 	
-		NVAR gcurrent, giter
+		NVAR gcurrent, giter,gPercent
 		
 		print "Completed iteration #" + num2str(gcurrent) + " of " + num2str(giter)
+		gPercent = gcurrent*100/gIter
 		
-		// Storing / taking value from the themal??
-		Wave thermalpeakwave
-		thermalpeakwave[gcurrent-1] = peakThermalValue()
+		// Calculating area(s) under the curve
+		areaUnderCurve(gcurrent-1)
 		
 		gcurrent +=1
 		
@@ -134,55 +173,73 @@ Function Thermaliterator()
 			SetDataFolder root:
 			ARCheckFunc("ARUserCallbackMasterCheck_1",0)
 			
-			// Displaying the results:
-			Edit/K=0 'thermalpeakwave';DelayUpdate
-			display thermalpeakwave
+			// Displaying the results:			
+			displayAreas()
+			// Killing the thermal window
+			KillWindow ThermalGraph
 		endif
 		
 	endif
 
 End
 
-Function peakThermalValue()
+Function areaUnderCurve(index)
+	Variable index
+
+	String dfSave = GetDataFolder(1)
+	SetDataFolder root:packages:ThermalAnalysis
 	
+	NVAR gstart1,gend1,gstart2,gend2	
 	Wave thermwave = root:packages:MFP3D:Tune:TotalPSD
+	Wave thermalAreas
+	
+	if(gstart1 > gend1)
+		gend1=gstart1
+	endif
+	if(gstart2 > gend2)
+		gend2=gstart2
+	endif
 	
 	Variable i
-	for (i=2 ; i < numpnts(thermwave) ; i+=1)
-		//print "i = " + num2str(i)
-		//print "comparing indices i and i-1 as : " + num2str(thermwave[i]) + " vs " + num2str(thermwave[i-1])
-		if(thermwave[i] > thermwave[i-1])
-			//print "starting ascent at index " +  num2str(i-1)
-			break
-		endif
-	endfor
+	Variable total1 = 0
+	Variable total2 = 0
+	if(gend1 <= numpnts(thermwave))
+		for (i=gstart1 ; i <= gend1 ; i+=1)
+			total1 += thermwave[i]
+		endfor
+	endif
+	if(gend2 <= numpnts(thermwave))
+		for (i=gstart2 ; i <= gend2 ; i+=1)
+			total2 += thermwave[i]
+		endfor
+	endif
 	
-	// reached the starting part of the ascent to the peak
-	
-	for (i=i ; i < numpnts(thermwave) ; i+=1)
-		if(thermwave[i] < thermwave[i-1])
-			//print "peak at index " + num2str(i-1)
-			return thermwave[i-1]
-		endif
-	endfor	
-	
-	return -1
+	thermalAreas[index][0] = total1
+	thermalAreas[index][1] = total2
+		
+	SetDataFolder dfSave	
 End
 
-Function saveResults (ctrlname) : ButtonControl
-	String ctrlname
-	
+Function displayAreas()
+
 	String dfSave = GetDataFolder(1)
-	// Grabbing the current Lithos that are being displayed to the user
-	setdatafolder root:packages:ThermalAnalysis
+	SetDataFolder root:packages:ThermalAnalysis
+
+	Wave thermalAreas
+	NVAR gArea1,gArea2
 	
-	if( exists("thermalpeakwave") != 1)
-		DoAlert 0, "\t\tNo results found!\nPerform Iterations before saving!"
-		return -1
-	endif
-	// O - overwrite ok, J - tab limted, W - save wave name, I - provides dialog
-	Save /O/J/W/I thermalpeakwave
+	Variable i,total1,total2
+	total1 = 0
+	total2 = 0
 	
-	setdatafolder dfsave
+	for(i=0; i<numpnts(thermalAreas); i+=1)
+		total1 += thermalAreas[i][0]
+		total2 += thermalAreas[i][1]
+	endfor
 	
+	gArea1 = total1/numpnts(thermalAreas)
+	gArea2 = total2/numpnts(thermalAreas)
+
+	SetDataFolder dfSave	
+
 End
