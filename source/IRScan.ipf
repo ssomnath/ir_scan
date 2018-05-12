@@ -30,12 +30,8 @@ Function IRScanDriver()
 	//Thermal related Variables and set up
 	////////////////////////////////////////////////////////////////////////////////////////////
 	
-	//Total number of times this should run
-	Variable/G gThermaliter=2
-	// Samples per iteration
+	// Samples per thermal
 	Variable/G gThermalsamples=5
-	// How many times it has already run
-	Variable/G gThermalcurrent=1
 	
 	//Variables for the indices of Thermal
 	Variable start1 = NumVarOrDefault(":gThermalstart1",58)
@@ -46,9 +42,8 @@ Function IRScanDriver()
 	Variable/G gThermalstart2= start2
 	Variable end2 = NumVarOrDefault(":gThermalend2",75)
 	Variable/G gThermalend2= end2
-		
-	//Variable for displaying Thermal Progress for that coordinate
-	Variable/G gThermalPercent=0
+	
+	Variable/G gThermalStarted = 0
 		
 	//Set up call back information to enable looping
 	//turn on master callbacks
@@ -56,7 +51,7 @@ Function IRScanDriver()
 	//turn on the other callbacks we will use
 	ARCheckFunc("ARUserCallbackThermDoneCheck_1",1)
 	//tell the callbacks what to call
-	PDS("ARUserCallbackThermDone","Thermaliterator()") //Does a Thermal
+	PDS("ARUserCallbackThermDone","Thermal_callback()") //Does a Thermal
 	
 	/////////////////////////////////////////////////////////////////////////////////////////////////
 	//Stage Movement variables and set up
@@ -74,7 +69,7 @@ Function IRScanDriver()
 	
 	Variable/G gscansize, gscanpoints, gScanAbort, gScanPercent
 	gscansize = 20// in microns - default
-	gScanPoints = 4// default
+	gScanPoints = 2// default
 	gScanAbort = 0
 	gScanPercent = 0
 	
@@ -102,7 +97,6 @@ Window IRScanPanel(): Panel
 	SetDrawEnv fstyle= 1
 	DrawText 16,25, "Scan Controls:"
 	
-	
 	SetVariable sv_scansize,pos={16,31},size={151,18},title="Scan Size (um)", limits={0,90,1}	
 	SetVariable sv_scansize,value= root:packages:IRScan:gScanSize,live= 1
 	SetVariable sv_scanpoints,pos={16,57},size={139,18},title="Scan Points", limits={1,inf,1}	
@@ -111,9 +105,9 @@ Window IRScanPanel(): Panel
 	SetDrawEnv fstyle= 1
 	DrawText 16,108, "Thermal Controls:"
 	
-	SetVariable sv_maxiter,pos={16,117},size={184,18},title="Number of Iterations"
-	SetVariable sv_maxiter,value= root:packages:IRScan:gThermaliter,live= 1
-	SetVariable sv_maxiter,help={"Number of times the Thermal must run"}
+	Popupmenu pm_resolution,pos={16,115},size={135,18},title="Resolution"
+	Popupmenu pm_resolution,value="1, best;2;3;4;5, default;6;7;8;9, fastest;" ,live= 1, proc=ResolPopup
+	
 	SetVariable sv_itertime,pos={16,143},size={184,18},title="Number of Samples", limits={0,inf,1}	
 	SetVariable sv_itertime,value= root:packages:IRScan:gThermalsamples,live= 1
 	SetVariable sv_itertime,help={"Number of samples taken per Thermal"}
@@ -130,19 +124,13 @@ Window IRScanPanel(): Panel
 	SetVariable sv_start2,value= root:packages:IRScan:gThermalstart2,live= 1
 	SetVariable sv_end2,pos={115,232},size={84,18},title="End 2", limits={0,inf,1}
 	SetVariable sv_end2,value= root:packages:IRScan:gThermalend2,live= 1
-	
-	//ValDisplay vd_Area1,pos={16,163},size={180,18},title="Area 1"
-	//ValDisplay vd_Area1,value= root:packages:IRScan:gThermalArea1,live= 1
-	
-	//ValDisplay vd_Area2,pos={16,188},size={180,18},title="Area 2"
-	//ValDisplay vd_Area2,value= root:packages:IRScan:gArea2,live= 1
-	
+		
 	SetDrawEnv fstyle= 1
 	DrawText 16,278, "Progress:"
 	
 	ValDisplay vd_ThermalProgress,pos={16,288},size={183,20},title="Thermal", mode=0
 	ValDisplay vd_ThermalProgress,limits={0,100,0},barmisc={0,35},highColor= (0,43520,65280)
-	ValDisplay vd_ThermalProgress,value= root:packages:IRScan:gThermalPercent
+	ValDisplay vd_ThermalProgress,value=100*root:Packages:MFP3D:Main:Variables:ThermalVariablesWave[%ThermalCounter]/root:packages:IRScan:gThermalSamples
 	
 	ValDisplay vd_ScanProgress,pos={16,318},size={183,20},title="Scan", mode=0
 	ValDisplay vd_ScanProgress,limits={0,100,0},barmisc={0,35},highColor= (0,43520,65280)
@@ -154,6 +142,22 @@ Window IRScanPanel(): Panel
 	SetDrawEnv fstyle= 1 
 	SetDrawEnv textrgb= (0,0,65280)
 	DrawText 49,397, "Suhas Somnath, UIUC 2010"
+	
+End
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////// RESOL POPUP ///////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// This function simply allows the user to access the resolution control for the thermal
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+Function ResolPopup(pa) : PopupMenuControl
+	STRUCT WMPopupAction &pa
+		
+	switch( pa.eventCode )
+		case 2: // mouse up
+			ThermalResolutionPopupFunc("ThermalResolutionPopup_1",pa.popNum,pa.popStr)
+			break
+	endswitch
 	
 End
 
@@ -184,7 +188,7 @@ End
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 Function wrapUpScan()
 
-	//Make sure that no more 
+	//Make sure that no more Thermals are done
 	ARCheckFunc("ARUserCallbackMasterCheck_1",0)
 	
 	//Stopping the PIS Loops
@@ -193,7 +197,10 @@ Function wrapUpScan()
 	td_StopPISLoop(1)
 	
 	//Displaying results:
+	String dfSave = GetDataFolder(1)
+	SetDataFolder root:packages:IRScan
 	Edit/K=0 'finalThermal';DelayUpdate
+	SetDataFolder dfSave
 	DoAlert 0, "There are two 'pages' in this table, one for each area under the curve\nUse the arrows in the top right corner to see them\nTo export this table go to: \nFile>>Save Table Copy >> Select txt or csv as type"
 		
 	ModifyControl but_start, disable=0, title="Start Scan"
@@ -216,8 +223,10 @@ Function startScan (ctrlname) : ButtonControl
 	ModifyControl but_stop, disable=0
 	ModifyControl but_start, disable=2, title="Scanning..."
 	
-	NVAR gscansize, gscanpoints
+	NVAR gscansize, gscanpoints, gScanAbort
 	NVAR gIsMovingRight, gXindex, gYindex, gDeltaX, gDeltaY, gOriginX, gOriginY, gScanPercent
+	
+	gScanAbort = 0
 	
 	//Before anything is done set scansize right (to microns):
 	gScanPercent = 0
@@ -226,6 +235,9 @@ Function startScan (ctrlname) : ButtonControl
 	//Preparing the wave in which the final area values are to be stored:
 	//Changing the number of area-under-curve values to be stored can 
 	//easily be changed by increasing the number of layers 
+	//Best to redimension the wave because remaking the wave doesn't
+	//erase all the old data
+	Redimension/N=0 finalThermal
 	Make/O/N=(gscanpoints,gscanpoints,2) finalThermal
 	
 	// Just index based variables
@@ -239,8 +251,21 @@ Function startScan (ctrlname) : ButtonControl
 	gOriginX = 0
 	gOriginY = 0
 	
-	//DoAlert 0, "If the 'Stop Scan' button does not work\nTry the 'Abort' button at the bottom left of the IGOR screen"
+	// Initializing all the thermal based variables here:
+	
+	NVAR gThermalsamples, gThermalstart1,gThermalend1,gThermalstart2,gThermalend2	
 		
+	PV("ThermalSamples",gThermalsamples)
+	PV("ThermalSamplesLimit",gThermalsamples)
+	
+	if(gThermalstart1 > gThermalend1)
+		gThermalend1=gThermalstart1
+	endif
+	if(gThermalstart2 > gThermalend2)
+		gThermalend2=gThermalstart2
+	endif
+	
+	
 	// Moving to first coordinate
 	MoveStage(gOriginX, gOriginY,gOriginX, gOriginY)
 	
@@ -258,8 +283,18 @@ Function MoveStage(X_start, Y_start, X_end, Y_end)
 	
 	String dfSave = GetDataFolder(1)
 	SetDataFolder root:packages:IRScan
+	
+	NVAR gScanAbort
+	
+	if(gScanAbort)
+		SetDataFolder dfSave
+		wrapUpScan()
+		return -1
+	endif
 		
 	Make/N=(1024)/O XVoltage YVoltage XSensor YSensor XCommand YCommand
+	
+	//print "moving stage"
 	
 	//Display/K=1 /W=(5.25,41.75,399.75,250.25) XVoltage
 	//ModifyGraph rgb(XVoltage)=(0,0,65535 )
@@ -324,6 +359,14 @@ Function holdStationary()
 	
 	NVAR X_PGain, X_IGain, X_SGain, Y_PGain, Y_IGain, Y_SGain
 	
+	NVAR gScanAbort
+	
+	if(gScanAbort)
+		SetDataFolder dfSave
+		wrapUpScan()
+		return -1
+	endif
+	
 	Wave XCommand, YCommand
 	
 	Variable Error = 0
@@ -350,8 +393,10 @@ Function holdStationary()
 	while ((ticks - t0)/60 < 3)	
 	
 	SetDataFolder dfSave
+	
+	//print "calling thermal start"
 		
-	startThermals()
+	startThermal()
 	
 End
 
@@ -369,7 +414,10 @@ function moveToNext()
 	
 	if(gScanAbort)
 		wrapUpScan()
+		return -1
 	endif
+	
+	//print "requesting to move to next"
 	
 	//printf "Right= %.2g, Xindex = %.2g, Yindex = %.2g\r", gIsMovingRight, gXindex, gYindex
 	
@@ -409,30 +457,31 @@ function moveToNext()
 End
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////// START THERMALS ///////////////////////////////////////////////////////////
+////////////////////////////////////////////////// START THERMAL /////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// This is the function sets up the variables and starts the iteration of thermals
+// This is the function starts a thermal
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-Function startThermals()
+Function startThermal()
 	
 	String dfSave = GetDataFolder(1)
-	SetDataFolder root:packages:IRScan
+	SetDataFolder root:packages:IRScan	
 	
-	NVAR gThermalsamples, gThermalcurrent, gThermaliter, gThermalPercent
+	NVAR gScanAbort
 	
-	gThermalcurrent = 1
-	gThermalPercent = 0
+	if(gScanAbort)
+		SetDataFolder dfSave
+		wrapUpScan()
+		return -1
+	endif
 	
-	Make/O/N=(gThermaliter,2) thermalareas
-	
-	PV("ThermalSamples",gThermalsamples)
-	PV("ThermalSamplesLimit",gThermalsamples)
+	NVAR gThermalStarted
+	gThermalStarted = 1	
 	
 	ARCheckFunc("ARUserCallbackMasterCheck_1",1)
 	
 	SetDataFolder dfSave
 	
-	//Call The iterator:
+	//Doing the thermal
 	Variable t0 = ticks
 	do
 	while ((ticks - t0)/60 < 1)
@@ -440,80 +489,56 @@ Function startThermals()
 	//print "Input Sensors = (" + num2str(td_rv("X%input@Controller")) + " , " + num2str(td_rv("Y%input@Controller")) + ")"
 	//print "Output Sensors = (" + num2str(td_rv("X%output@Controller")) + " , " + num2str(td_rv("Y%output@Controller")) + ")"
 
-	//print "Starting Thermal Iterator!"
+	//print "Starting Thermal"
 	DoThermalFunc("DoThermal")
 	
 End
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////// THERMAL ITERATOR ///////////////////////////////////////////////////////////
+/////////////////////////////////////////////// THERMAL CALLBACK //////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // This is the function that is called once a thermal is completed - hence a 'Callback' function
-// It decides whether to perform a new thermal or to ask the stage to be moved to the next
+// It calls for the calculation of the area under the curve and asks the stage to be moved to the next
 // coordinate
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-Function Thermaliterator()
+Function Thermal_callback()
+		
+	String dfSave = GetDataFolder(1)
+	SetDataFolder root:packages:IRScan
 	
-	Variable t0
+	NVAR gScanAbort, gThermalStarted
 	
-	if(GV("ThermalCounter") < GV("ThermalSamples"))
-		//print GV("ThermalCounter")
-		//print "Not done this time, will wait and execute again!"
-		t0 = ticks
-		do
+	if(gScanAbort)
+		SetDataFolder dfSave
+		wrapUpScan()
+		return -1
+	endif
+	
+	if(gThermalStarted)
+		//Legitimate call to this function
+		//print "@ThermalCallback - Legal call"
+		
+		gThermalStarted = 0
+		
+		areaUnderCurve()
+	
+		DoWindow/K ThermalGraph
+	
+		PV("ThermalCounter",0)
+		
+		ARCheckFunc("ARUserCallbackMasterCheck_1",0)
+			
+		SetDataFolder dfSave
+	
+		//Variable t0 = ticks
+		//do
 			//This is simply to add a pause into the program
-		while ((ticks - t0)/60 < 1)	
-		DoThermalFunc("DoThermal")
+		//while ((ticks - t0)/60 < 1)
+									
+		moveToNext()
 	else
-		///print "done this time"
-		
-		String dfSave = GetDataFolder(1)
-		SetDataFolder root:packages:IRScan
-	
-		NVAR gThermalCurrent, gThermaliter,gThermalPercent, gScanAbort
-		
-		if(gScanAbort)
-			wrapUpScan()
-		endif
-		
-		//print "Completed iteration #" + num2str(gThermalCurrent) + " of " + num2str(gThermaliter)
-		gThermalPercent = gThermalCurrent*100/gThermaliter
-		
-		// Calculating area(s) under the curve
-		areaUnderCurve(gThermalcurrent-1)
-		
-		gThermalCurrent +=1
-		
-		if(gThermalCurrent <= gThermaliter)
-			// Killing the thermal graph because it wont restart
-			KillWindow ThermalGraph
-		
-			PV("ThermalCounter",0)
-			//Waiting:
-			t0 = ticks
-			do
-				//This is simply to add a pause into the program
-			while ((ticks - t0)/60 < 1)
-		
-			// Start a new thermal NOW!!
-			//print "Starting another thermal now!"
-			SetDataFolder dfSave
-			DoThermalFunc("DoThermal")
-		
-		else
-			//print "All Iterations finished"
-			gThermalCurrent=1
-			SetDataFolder dfSave
-			ARCheckFunc("ARUserCallbackMasterCheck_1",0)
-			
-			// Averaging Areas under curves			
-			averageAreas()
-			// Killing the thermal window
-			KillWindow ThermalGraph
-			
-			moveToNext()
-		endif
-		
+		SetDataFolder dfSave
+		//print "%%% Ignoring illegal ThermalCallback"
 	endif
 
 End
@@ -523,22 +548,15 @@ End
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // This is the function calculates the area(s) under the curve (thermal) and stores them 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-Function areaUnderCurve(index)
-	Variable index
+Function areaUnderCurve()
 
 	String dfSave = GetDataFolder(1)
 	SetDataFolder root:packages:IRScan
 	
 	NVAR gThermalStart1,gThermalEnd1,gThermalStart2,gThermalEnd2	
 	Wave thermwave = root:packages:MFP3D:Tune:TotalPSD
-	Wave thermalAreas
-	
-	if(gThermalStart1 > gThermalEnd1)
-		gThermalEnd1=gThermalStart1
-	endif
-	if(gThermalStart2 > gThermalEnd2)
-		gThermalEnd2=gThermalStart2
-	endif
+	NVAR gXindex, gYindex
+	Wave finalThermal
 	
 	Variable i
 	Variable total1 = 0
@@ -554,37 +572,8 @@ Function areaUnderCurve(index)
 		endfor
 	endif
 	
-	thermalAreas[index][0] = total1
-	thermalAreas[index][1] = total2
+	finalThermal[gXindex][gYindex][0] = total1
+	finalThermal[gXindex][gYindex][1] = total2
 		
 	SetDataFolder dfSave	
-End
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////// AVERAGE AREAS //////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// This is the function averages the areas calculated for the N Thermal iterations for a coordinate
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-Function averageAreas()
-
-	String dfSave = GetDataFolder(1)
-	SetDataFolder root:packages:IRScan
-
-	Wave thermalAreas, finalThermal
-	NVAR gXindex, gYindex
-	
-	Variable i,total1,total2
-	total1 = 0
-	total2 = 0
-	
-	for(i=0; i<numpnts(thermalAreas); i+=1)
-		total1 += thermalAreas[i][0]
-		total2 += thermalAreas[i][1]
-	endfor
-	
-	finalThermal[gXindex][gYindex][0] = total1/numpnts(thermalAreas)
-	finalThermal[gXindex][gYindex][1] = total2/numpnts(thermalAreas)
-
-	SetDataFolder dfSave	
-
 End
